@@ -39,6 +39,24 @@ export const apiSpecs: Record<string, ApiSpec> = {
 }`,
     defaultPlaygroundParams: { message: "Halo, siapa pencipta kamu?", model: "gpt-4" }
   },
+  "quillbot-ai-chat": {
+    slug: "quillbot-ai-chat",
+    name: "Quillbot AI Chat",
+    description: "Hubungkan ke AI Quillbot Chat untuk percakapan alami, menjawab pertanyaan, dan interaksi chat pintar.",
+    method: "GET",
+    path: "/api/v1/ai/quillbot",
+    isPremium: false,
+    categorySlug: "ai-apis",
+    categoryName: "AI APIs",
+    parameters: [
+      { name: "message", type: "string", required: true, description: "Pesan atau pertanyaan yang ingin dikirimkan ke Quillbot." }
+    ],
+    responseExample: `{
+  "status": true,
+  "result": "Halo! Saya adalah Quillbot AI. Ada yang bisa saya bantu hari ini?"
+}`,
+    defaultPlaygroundParams: { message: "Halo, siapa kamu?" }
+  },
   "ai-text-to-image": {
     slug: "ai-text-to-image",
     name: "AI Text to Image",

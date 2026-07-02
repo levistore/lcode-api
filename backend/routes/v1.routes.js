@@ -52,6 +52,7 @@ router.use(validateApiKey, apiKeyRateLimit(), setEndpointContext, requestLogger(
 
 // AI API Endpoints
 router.get("/ai/chat", v1Controller.aiChat);
+router.get("/ai/quillbot", v1Controller.aiQuillbot);
 router.post("/ai/text-to-image", v1Controller.aiTextToImage);
 router.post("/ai/sentiment", v1Controller.aiSentiment);
 
