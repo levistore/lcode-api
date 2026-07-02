@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                 String         @id @default(cuid())
+  name               String
+  email              String         @unique
+  emailVerified      DateTime?
+  password           String
+  image              String?
+  role               Role           @default(USER)
+  status             UserStatus     @default(ACTIVE)
+
+  verificationToken  String?
+  verificationExpiry DateTime?
+
+  resetToken         String?
+  resetTokenExpiry   DateTime?
+
+  sessions           Session[]
+  apiKeys            ApiKey[]
+  apiRequests        ApiRequest[]
+  subscriptions      Subscription[]
+  payments           Payment[]
+  auditLogs          AuditLog[]
+
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("sessions")
+}
+
+model ApiKey {
+  id        String       @id @default(cuid())
+  userId    String
+  key       String       @unique
+  name      String       @default("Default")
+  status    ApiKeyStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  lastUsed  DateTime?
+  expiresAt DateTime?
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([key])
+  @@map("api_keys")
+}
+
+model ApiEndpoint {
+  id           String         @id @default(cuid())
+  name         String
+  description  String
+  route        String         @unique
+  method       String         // GET, POST, PUT, DELETE, PATCH
+  categoryId   String
+  status       ApiStatus      @default(ACTIVE)
+  accessLevel  ApiAccessLevel @default(FREE)
+  rateLimit    Int            @default(60) // req per minute
+  requestCount Int            @default(0)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  category     Category       @relation(fields: [categoryId], references: [id])
+  requests     ApiRequest[]
+
+  @@index([categoryId])
+  @@map("api_endpoints")
+}
+
+model Category {
+  id          String        @id @default(cuid())
+  name        String        @unique
+  description String?
+  slug        String        @unique
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  endpoints   ApiEndpoint[]
+
+  @@map("categories")
+}
+
+model ApiRequest {
+  id           String       @id @default(cuid())
+  userId       String?
+  endpointId   String?
+  route        String
+  method       String
+  ip           String
+  statusCode   Int
+  responseTime Int          // ms
+  createdAt    DateTime     @default(now())
+
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  endpoint     ApiEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([endpointId])
+  @@index([createdAt])
+  @@map("api_requests")
+}
+
+model Plan {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  code          String         @unique // FREE, PREMIUM, ENTERPRISE
+  price         Float
+  requestsLimit Int
+  features      String         // Comma-separated or JSON list
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id        String             @id @default(cuid())
+  userId    String
+  planId    String
+  status    SubscriptionStatus @default(ACTIVE)
+  startDate DateTime           @default(now())
+  endDate   DateTime?
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan      Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([planId])
+  @@map("subscriptions")
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  invoiceId String        @unique
+  userId    String
+  amount    Float
+  method    String
+  status    PaymentStatus @default(PENDING)
+  date      DateTime      @default(now())
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("payments")
+}
+
+model Announcement {
+  id          String           @id @default(cuid())
+  title       String
+  content     String
+  type        AnnouncementType @default(INFO)
+  publishDate DateTime         @default(now())
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@map("announcements")
+}
+
+model Setting {
+  id                       String  @id @default("global")
+  siteName                 String  @default("Lcode API")
+  siteDescription          String  @default("API Marketplace Platform")
+  logoUrl                  String?
+  enableRegistration       Boolean @default(true)
+  enableGoogleLogin        Boolean @default(false)
+  enableEmailVerification Boolean @default(false)
+  resendApiKey             String?
+  resendSenderEmail        String?
+  freeUserLimit            Int     @default(100)
+  premiumUserLimit         Int     @default(5000)
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  adminId   String
+  action    String
+  details   String
+  ip        String
+  createdAt DateTime @default(now())
+
+  admin     User     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@map("audit_logs")
+}
+
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BANNED
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum ApiStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ApiAccessLevel {
+  FREE
+  PREMIUM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REFUNDED
+}
+
+enum AnnouncementType {
+  INFO
+  WARNING
+  UPDATE
+}
