@@ -473,6 +473,7 @@ export default function ApiDetailPage({ params }: { params: Promise<{ slug: stri
           const spec = getSpecBySlug(slug) || getSpecByRoute(data.endpoint.route);
           setApi({
             ...data.endpoint,
+            path: spec?.path || data.endpoint.route,
             parameters: spec?.parameters || [],
             responseExample: spec?.responseExample || JSON.stringify({ status: true, message: "Success" }, null, 2),
             defaultPlaygroundParams: spec?.defaultPlaygroundParams || {},
