@@ -63,6 +63,27 @@ const apisDetailData: Record<string, ApiDetail> = {
 }`,
     defaultPlaygroundParams: { message: "Halo, siapa pencipta kamu?", model: "gpt-4" }
   },
+  "quillbot-ai-chat": {
+    slug: "quillbot-ai-chat",
+    name: "Quillbot AI Chat",
+    description: "Hubungkan ke AI Quillbot Chat untuk percakapan alami, menjawab pertanyaan, dan interaksi chat pintar.",
+    method: "GET",
+    path: "/api/quillbot",
+    requests: "210.840",
+    status: "Online",
+    isPremium: false,
+    parameters: [
+      { name: "text", type: "string", required: true, description: "Pesan atau pertanyaan yang ingin dikirimkan ke Quillbot." },
+      { name: "apikey", type: "string", required: true, description: "Kunci API Developer Lcode Anda." }
+    ],
+    responseExample: `{
+  "status": true,
+  "code": 200,
+  "creator": "LeviCodex",
+  "result": "Halo! Saya adalah Quillbot AI. Ada yang bisa saya bantu hari ini?"
+}`,
+    defaultPlaygroundParams: { text: "Halo, siapa kamu?" }
+  },
   "ai-text-to-image": {
     slug: "ai-text-to-image",
     name: "AI Text to Image",

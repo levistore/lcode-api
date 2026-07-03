@@ -53,6 +53,9 @@ async function setCookie(name, value) {
 }
 
 async function initCookies(deviceId) {
+  // Clear Cookie Jar to prevent session overlap issues
+  await jar.removeAllCookies();
+
   await setCookie("qbDeviceId", deviceId);
   await setCookie("ajs_anonymous_id", qbUuid());
   await setCookie("anonID", qbHex(8));
@@ -79,7 +82,16 @@ function createSession() {
   };
 }
 
+let inMemorySession = null;
+
 async function getSession() {
+  if (inMemorySession && inMemorySession.message_count < MAX_MESSAGES_PER_SESSION) {
+    return {
+      session: inMemorySession,
+      new_session: false
+    };
+  }
+
   const data = await readJson(SESSION_FILE, {
     current: null,
     sessions: []
@@ -92,23 +104,32 @@ async function getSession() {
     data.current = current;
     data.sessions.push(current);
     await writeJson(SESSION_FILE, data);
+    inMemorySession = current;
     return {
-      data,
       session: current,
       new_session: true
     };
   }
 
+  inMemorySession = current;
   return {
-    data,
     session: current,
     new_session: false
   };
 }
 
-async function updateSession(data, conversationId) {
-  const session = data.sessions.find(v => v.conversation_id === conversationId);
+async function updateSession(conversationId) {
+  if (inMemorySession && inMemorySession.conversation_id === conversationId) {
+    inMemorySession.message_count += 1;
+    inMemorySession.updated_at = new Date().toISOString();
+  }
 
+  const data = await readJson(SESSION_FILE, {
+    current: null,
+    sessions: []
+  });
+
+  const session = data.sessions.find(v => v.conversation_id === conversationId);
   if (session) {
     session.message_count += 1;
     session.updated_at = new Date().toISOString();
@@ -119,26 +140,200 @@ async function updateSession(data, conversationId) {
 }
 
 function parseNdjson(text) {
+  if (typeof text !== "string") return "";
   const chunks = [];
+  const lines = text.split(/\r?\n/);
 
-  for (const line of text.split(/\r?\n/)) {
-    const clean = line.trim();
-    if (!clean || !clean.startsWith("{")) continue;
+  for (const line of lines) {
+    let clean = line.trim();
+    if (!clean) continue;
+
+    // Handle standard SSE data: format
+    if (clean.startsWith("data:")) {
+      clean = clean.substring(5).trim();
+    }
+
+    if (!clean.startsWith("{")) continue;
 
     try {
       const json = JSON.parse(clean);
-      if (json.type === "content" && typeof json.content === "string") chunks.push(json.content);
+      if (json.type === "content" && typeof json.content === "string") {
+        chunks.push(json.content);
+      } else if (json.content && typeof json.content === "string") {
+        chunks.push(json.content);
+      }
     } catch {}
   }
 
   return chunks.join("").trim();
 }
 
-// ─── AI APIs ───
+export async function ask(prompt) {
+  let attempts = 0;
+  const maxAttempts = 3;
+  let lastError = null;
+
+  while (attempts < maxAttempts) {
+    attempts++;
+    try {
+      const { session } = await getSession();
+
+      // Clear cookie jar and populate cookies for current session's device ID
+      await initCookies(session.device_id);
+
+      // 1. Initial handshake request to set up session on target
+      const getRes = await client.get(`${BASE_QB}/`, {
+        timeout: 15000,
+        headers: {
+          "sec-ch-ua": `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`,
+          "sec-ch-ua-mobile": "?1",
+          "sec-ch-ua-platform": `"Android"`,
+          "upgrade-insecure-requests": "1",
+          "user-agent": USER_AGENT,
+          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+          "sec-fetch-site": "none",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-user": "?1",
+          "sec-fetch-dest": "document",
+          "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
+      });
+
+      if (getRes.status < 200 || getRes.status >= 300) {
+        throw new Error(`Quillbot initial handshake failed with status ${getRes.status}`);
+      }
+
+      const traceId = qbHex(16);
+      const spanId = qbHex(8);
+      const sampleRand = Math.random();
+
+      const body = {
+        message: {
+          content: `${prompt}\n\n`
+        },
+        context: {
+          editorContext: "",
+          selectionContext: "",
+          userDialect: "en-us",
+          apiVersion: 2
+        },
+        origin: {
+          name: "ai-chat.chat",
+          url: BASE_QB
+        }
+      };
+
+      // 2. Stream POST request to conversation endpoint
+      const postRes = await client.post(`${BASE_QB}/api/ai-chat/chat/conversation/${session.conversation_id}`, body, {
+        responseType: "text",
+        timeout: 30000, // 30 seconds for chat stream processing
+        headers: {
+          "cache-control": "max-age=0",
+          "sec-ch-ua-platform": `"Android"`,
+          "platform-type": "webapp",
+          "qb-product": "AI-CHAT",
+          "sec-ch-ua": `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`,
+          "sec-ch-ua-mobile": "?1",
+          "useridtoken": "empty-token",
+          "baggage": `sentry-environment=prod,sentry-release=v42.51.6,sentry-public_key=5743ef12f4887fc460c7968ebb2de54d,sentry-trace_id=${traceId},sentry-sampled=false,sentry-sample_rand=${sampleRand},sentry-sample_rate=0.01`,
+          "sentry-trace": `${traceId}-${spanId}-0`,
+          "user-agent": USER_AGENT,
+          "accept": "text/event-stream",
+          "webapp-version": "42.51.6",
+          "content-type": "application/json",
+          "origin": BASE_QB,
+          "sec-fetch-site": "same-origin",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-dest": "empty",
+          "referer": `${BASE_QB}/ai-chat/c/${session.conversation_id}`,
+          "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
+      });
+
+      if (postRes.status < 200 || postRes.status >= 300) {
+        throw new Error(`Quillbot conversation request failed with status ${postRes.status}`);
+      }
+
+      const raw = typeof postRes.data === "string" ? postRes.data : JSON.stringify(postRes.data);
+      const result = parseNdjson(raw);
+
+      if (!result) {
+        throw new Error("Unable to parse a complete message response (response structure may have changed)");
+      }
+
+      // Succeeded! Increment message count and save state
+      await updateSession(session.conversation_id);
+
+      return {
+        status: true,
+        code: 200,
+        result
+      };
+    } catch (err) {
+      lastError = err;
+      console.warn(`[Quillbot ask attempt ${attempts} failed]: ${err.message}`);
+
+      // Reset active in-memory session reference to trigger fresh session creation on next retry
+      inMemorySession = null;
+
+      if (attempts < maxAttempts) {
+        // Sleep backoff
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+      }
+    }
+  }
+
+  // If we reach here, all attempts failed
+  return {
+    status: false,
+    code: lastError.response?.status || 500,
+    error: lastError.message || "Failed after 3 attempts"
+  };
+}
+
+export async function aiQuillbot(req, res) {
+  const text = req.query.text || req.query.message;
+  if (!text) {
+    return res.status(400).json({
+      status: false,
+      code: 400,
+      error: "Parameter 'text' or 'message' is required"
+    });
+  }
+
+  try {
+    const askResponse = await ask(text);
+    if (askResponse.status) {
+      return res.status(200).json({
+        status: true,
+        code: 200,
+        creator: "LeviCodex",
+        result: askResponse.result
+      });
+    } else {
+      return res.status(askResponse.code || 500).json({
+        status: false,
+        code: askResponse.code || 500,
+        error: askResponse.error || "Internal Server Error"
+      });
+    }
+  } catch (err) {
+    return res.status(500).json({
+      status: false,
+      code: 500,
+      error: err.message || "Quillbot request failed"
+    });
+  }
+}
 
 export async function aiChat(req, res) {
   const { message, model = "gpt-4" } = req.query;
-  if (!message) return apiError(res, "Parameter 'message' is required");
+  if (!message) {
+    return res.status(400).json({
+      status: false,
+      error: "Parameter 'message' is required"
+    });
+  }
 
   let reply = `Halo! Saya adalah asisten AI Lcode. Pertanyaan Anda: "${message}". Model: ${model}.`;
   
@@ -152,99 +347,6 @@ export async function aiChat(req, res) {
     status: true,
     result: reply,
   });
-}
-
-export async function aiQuillbot(req, res) {
-  const { message } = req.query;
-  if (!message) {
-    return apiError(res, "Parameter 'message' is required");
-  }
-
-  try {
-    const { data, session, new_session } = await getSession();
-
-    await initCookies(session.device_id);
-
-    await client.get(`${BASE_QB}/`, {
-      headers: {
-        "sec-ch-ua": `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`,
-        "sec-ch-ua-mobile": "?1",
-        "sec-ch-ua-platform": `"Android"`,
-        "upgrade-insecure-requests": "1",
-        "user-agent": USER_AGENT,
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "sec-fetch-site": "none",
-        "sec-fetch-mode": "navigate",
-        "sec-fetch-user": "?1",
-        "sec-fetch-dest": "document",
-        "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7"
-      }
-    });
-
-    const traceId = qbHex(16);
-    const spanId = qbHex(8);
-    const sampleRand = Math.random();
-
-    const body = {
-      message: {
-        content: `${message}\n\n`
-      },
-      context: {
-        editorContext: "",
-        selectionContext: "",
-        userDialect: "en-us",
-        apiVersion: 2
-      },
-      origin: {
-        name: "ai-chat.chat",
-        url: BASE_QB
-      }
-    };
-
-    const response = await client.post(`${BASE_QB}/api/ai-chat/chat/conversation/${session.conversation_id}`, body, {
-      responseType: "text",
-      headers: {
-        "cache-control": "max-age=0",
-        "sec-ch-ua-platform": `"Android"`,
-        "platform-type": "webapp",
-        "qb-product": "AI-CHAT",
-        "sec-ch-ua": `"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"`,
-        "sec-ch-ua-mobile": "?1",
-        "useridtoken": "empty-token",
-        "baggage": `sentry-environment=prod,sentry-release=v42.51.6,sentry-public_key=5743ef12f4887fc460c7968ebb2de54d,sentry-trace_id=${traceId},sentry-sampled=false,sentry-sample_rand=${sampleRand},sentry-sample_rate=0.01`,
-        "sentry-trace": `${traceId}-${spanId}-0`,
-        "user-agent": USER_AGENT,
-        "accept": "text/event-stream",
-        "webapp-version": "42.51.6",
-        "content-type": "application/json",
-        "origin": BASE_QB,
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-        "referer": `${BASE_QB}/ai-chat/c/${session.conversation_id}`,
-        "accept-language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7"
-      }
-    });
-
-    const raw = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
-    const result = parseNdjson(raw);
-    const successStatus = response.status >= 200 && response.status < 300 && !!result;
-
-    if (successStatus) {
-      await updateSession(data, session.conversation_id);
-    }
-
-    if (!successStatus) {
-      return apiError(res, `Quillbot API Error: ${raw}`, response.status);
-    }
-
-    return res.status(200).json({
-      status: true,
-      result: result
-    });
-  } catch (err) {
-    return apiError(res, err.message || "Quillbot request failed", 500);
-  }
 }
 
 export async function aiTextToImage(req, res) {

@@ -44,18 +44,21 @@ export const apiSpecs: Record<string, ApiSpec> = {
     name: "Quillbot AI Chat",
     description: "Hubungkan ke AI Quillbot Chat untuk percakapan alami, menjawab pertanyaan, dan interaksi chat pintar.",
     method: "GET",
-    path: "/api/v1/ai/quillbot",
+    path: "/api/quillbot",
     isPremium: false,
     categorySlug: "ai-apis",
     categoryName: "AI APIs",
     parameters: [
-      { name: "message", type: "string", required: true, description: "Pesan atau pertanyaan yang ingin dikirimkan ke Quillbot." }
+      { name: "text", type: "string", required: true, description: "Pesan atau pertanyaan yang ingin dikirimkan ke Quillbot." },
+      { name: "apikey", type: "string", required: true, description: "Kunci API Developer Lcode Anda." }
     ],
     responseExample: `{
   "status": true,
+  "code": 200,
+  "creator": "LeviCodex",
   "result": "Halo! Saya adalah Quillbot AI. Ada yang bisa saya bantu hari ini?"
 }`,
-    defaultPlaygroundParams: { message: "Halo, siapa kamu?" }
+    defaultPlaygroundParams: { text: "Halo, siapa kamu?" }
   },
   "ai-text-to-image": {
     slug: "ai-text-to-image",

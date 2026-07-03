@@ -32,7 +32,13 @@ async function main() {
   console.log("Category created/updated:", category.name, `(${category.id})`);
 
   // 2. Create Endpoint "Quillbot AI Chat"
-  const route = "/api/v1/ai/quillbot";
+  const route = "/api/quillbot";
+  
+  // Clean up the old route to avoid conflicts
+  await prisma.apiEndpoint.deleteMany({
+    where: { route: "/api/v1/ai/quillbot" }
+  });
+
   const endpoint = await prisma.apiEndpoint.upsert({
     where: { route },
     update: {
